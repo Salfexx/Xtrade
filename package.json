@@ -1,0 +1,11 @@
+{
+  "name": "xtrade",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Next-Gen Multi-Asset Crypto Trading Platform & Engine",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build",
+    "vercel-build": "cd frontend && npm install && npm run build",
+    "dev": "cd frontend && npm run dev"
+  }
+}
