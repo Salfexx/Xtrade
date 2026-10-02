@@ -316,7 +316,7 @@ const getSampleStepMs = (viewSeconds: number): number => {
       lastFrameTime = perfNow;
       pulsePhase = (pulsePhase + frameDelta * 3.2) % (Math.PI * 2);
 
-      // 1. 1-Second Discrete Real Market Trigger (With Anti-Flatline Engine & Instant Binance Feed)
+      // 1. 1-Second Discrete Real Market Trigger (With Anti-Flatline Engine)
       if (now >= secondStartTimeRef.current + 1000) {
         const completedTime = secondStartTimeRef.current;
         const completedPrice = currentSecondPriceRef.current;
@@ -334,13 +334,13 @@ const getSampleStepMs = (viewSeconds: number): number => {
           secondStartTimeRef.current = Math.floor(now / 1000) * 1000;
         }
 
-        // Determine next 1-second target price from live Binance stream:
+        // Determine next 1-second target price:
         let rawTarget = latestRealPriceRef.current > 0 ? latestRealPriceRef.current : basePrice;
         let nextPrice = rawTarget;
 
         // Anti-Flatline Rule:
         // If the price would be identical to previous second (or feed paused/static),
-        // apply natural micro-movement so the live curve always flows realistically like ExpertOption.
+        // apply natural micro-movement so the live curve always flows realistically.
         const isIdentical = Math.abs(nextPrice - completedPrice) < 0.000001;
         const hasLiveTrade = binanceFeed.hasRecentLiveTick(symbol, 2000);
 
@@ -370,11 +370,10 @@ const getSampleStepMs = (viewSeconds: number): number => {
         ticksRef.current = ticksRef.current.filter((t) => t.timestamp >= cutoff);
       }
 
-      // Smooth Continuous Intra-Second Ease + Instant Binance Trade Momentum
+      // 2. Smooth Intra-Second Continuous Hermite Ease (Continuous Flow across 1.0s)
       const intraProgress = Math.max(0, Math.min(1, (now - secondStartTimeRef.current) / 1000));
       const eased = 3 * intraProgress * intraProgress - 2 * intraProgress * intraProgress * intraProgress;
-      const targetP = latestRealPriceRef.current > 0 ? latestRealPriceRef.current : currentSecondPriceRef.current;
-      const curPrice = Math.max(0.0001, prevSecondPriceRef.current + (targetP - prevSecondPriceRef.current) * eased);
+      const curPrice = Math.max(0.0001, prevSecondPriceRef.current + (currentSecondPriceRef.current - prevSecondPriceRef.current) * eased);
 
       // Throttled notification
       if (perfNow - lastPriceNotifyRef.current > 100) {
@@ -548,13 +547,6 @@ const getSampleStepMs = (viewSeconds: number): number => {
         visible.push({ x: headX, y: headY });
       }
 
-      // Dynamic Directional Theme Color (Green on Up, Red on Down, Teal on Neutral)
-      const priceDelta = targetP - prevSecondPriceRef.current;
-      const isRising = priceDelta > 0.000001;
-      const isFalling = priceDelta < -0.000001;
-      const themeColor = isRising ? '#10B981' : isFalling ? '#EF4444' : (isDark ? '#14B8A6' : '#0B3B3C');
-      const themeRgba = isRising ? 'rgba(16, 185, 129,' : isFalling ? 'rgba(239, 68, 68,' : (isDark ? 'rgba(20, 184, 166,' : 'rgba(11, 59, 60,');
-
       if (visible.length >= 2) {
         ctx.setLineDash([]);
 
@@ -619,35 +611,35 @@ const getSampleStepMs = (viewSeconds: number): number => {
           areaPath.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p1.x, p1.y);
         }
 
-        // Gradient Area Fill under Spline (Closed down to bottom baseline)
+        // 9. Gradient Area Fill under Spline (Closed down to bottom baseline)
         areaPath.lineTo(headX, paddingTop + chartHeight);
         areaPath.lineTo(visible[0].x, paddingTop + chartHeight);
         areaPath.closePath();
 
         const grad = ctx.createLinearGradient(0, paddingTop, 0, paddingTop + chartHeight);
-        grad.addColorStop(0, `${themeRgba} 0.38)`);
-        grad.addColorStop(1, `${themeRgba} 0.0)`);
+        grad.addColorStop(0, isDark ? 'rgba(20, 184, 166, 0.38)' : 'rgba(11, 59, 60, 0.24)');
+        grad.addColorStop(1, isDark ? 'rgba(20, 184, 166, 0.0)' : 'rgba(11, 59, 60, 0.0)');
         ctx.fillStyle = grad;
         ctx.fill(areaPath);
 
         // 10. Soft Leading Glow Beam
-        const glowWidth = Math.min(140, liveChartWidth);
+        const glowWidth = Math.min(120, liveChartWidth);
         const headGlow = ctx.createLinearGradient(headX - glowWidth, 0, headX, 0);
-        headGlow.addColorStop(0, `${themeRgba} 0.0)`);
-        headGlow.addColorStop(1, `${themeRgba} 0.32)`);
+        headGlow.addColorStop(0, 'rgba(20, 184, 166, 0.0)');
+        headGlow.addColorStop(1, isDark ? 'rgba(20, 184, 166, 0.25)' : 'rgba(11, 59, 60, 0.18)');
         ctx.fillStyle = headGlow;
         ctx.fill(areaPath);
 
         // 11. Dual-Pass Optical Feather Glow Stroke
         ctx.lineWidth = 5.5;
-        ctx.strokeStyle = `${themeRgba} 0.25)`;
+        ctx.strokeStyle = isDark ? 'rgba(20, 184, 166, 0.22)' : 'rgba(11, 59, 60, 0.18)';
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.stroke(splinePath);
 
         // Crisp Core Spline Stroke
-        ctx.lineWidth = 2.4;
-        ctx.strokeStyle = themeColor;
+        ctx.lineWidth = 2.2;
+        ctx.strokeStyle = isDark ? '#14B8A6' : '#0B3B3C';
         ctx.stroke(splinePath);
       }
 
@@ -737,7 +729,7 @@ const getSampleStepMs = (viewSeconds: number): number => {
       // 13. Horizontal Live Price Tracker Line
       ctx.setLineDash([3, 3]);
       ctx.lineWidth = 1;
-      ctx.strokeStyle = themeColor;
+      ctx.strokeStyle = isDark ? '#14B8A6' : '#0B3B3C';
       ctx.beginPath();
       ctx.moveTo(headX, headY);
       ctx.lineTo(width - paddingRight, headY);
@@ -745,21 +737,21 @@ const getSampleStepMs = (viewSeconds: number): number => {
 
       // Right Axis Live Price Badge
       ctx.setLineDash([]);
-      ctx.fillStyle = themeColor;
+      ctx.fillStyle = isDark ? '#14B8A6' : '#0B3B3C';
       drawRoundedRect(ctx, width - paddingRight + 2, headY - 10, 68, 20, 4);
       ctx.fill();
-      ctx.fillStyle = '#FFFFFF';
+      ctx.fillStyle = isDark ? '#0B0E14' : '#FFFFFF';
       ctx.font = 'bold 9.5px monospace';
       ctx.textAlign = 'center';
       ctx.fillText(curPrice.toFixed(decimals), width - paddingRight + 36, headY + 3.5);
 
       // 14. Leading Live Radar Head (Particle emission + harmonic pulse)
-      if (Math.random() < 0.38) {
+      if (Math.random() < 0.35) {
         trailParticlesRef.current.push({
           x: headX - Math.random() * 6,
           y: headY + (Math.random() - 0.5) * 5,
-          alpha: 0.75,
-          radius: 2 + Math.random() * 2.5,
+          alpha: 0.65,
+          radius: 2 + Math.random() * 2,
         });
       }
 
@@ -770,7 +762,7 @@ const getSampleStepMs = (viewSeconds: number): number => {
         if (p.alpha <= 0) {
           trailParticlesRef.current.splice(i, 1);
         } else {
-          ctx.fillStyle = `${themeRgba} ${p.alpha})`;
+          ctx.fillStyle = isDark ? `rgba(20, 184, 166, ${p.alpha})` : `rgba(11, 59, 60, ${p.alpha})`;
           ctx.beginPath();
           ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
           ctx.fill();
@@ -778,22 +770,22 @@ const getSampleStepMs = (viewSeconds: number): number => {
       }
 
       // Harmonic Pulsing Radar Circle
-      const pulseSize = 6 + Math.sin(pulsePhase) * 5;
-      const pulseAlpha = 0.4 - Math.sin(pulsePhase) * 0.25;
+      const pulseSize = 6 + Math.sin(pulsePhase) * 4;
+      const pulseAlpha = 0.35 - Math.sin(pulsePhase) * 0.22;
 
-      ctx.fillStyle = `${themeRgba} ${pulseAlpha})`;
+      ctx.fillStyle = isDark ? `rgba(20, 184, 166, ${pulseAlpha})` : `rgba(11, 59, 60, ${pulseAlpha})`;
       ctx.beginPath();
-      ctx.arc(headX, headY, pulseSize + 5, 0, Math.PI * 2);
+      ctx.arc(headX, headY, pulseSize + 4, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.fillStyle = `${themeRgba} 0.55)`;
+      ctx.fillStyle = isDark ? 'rgba(20, 184, 166, 0.45)' : 'rgba(11, 59, 60, 0.45)';
       ctx.beginPath();
-      ctx.arc(headX, headY, 6.5, 0, Math.PI * 2);
+      ctx.arc(headX, headY, 6, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.fillStyle = '#FFFFFF';
-      ctx.strokeStyle = themeColor;
-      ctx.lineWidth = 2.2;
+      ctx.strokeStyle = isDark ? '#14B8A6' : '#0B3B3C';
+      ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(headX, headY, 3.5, 0, Math.PI * 2);
       ctx.fill();
