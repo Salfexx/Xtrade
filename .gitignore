@@ -36,3 +36,9 @@ yarn-error.log*
 .vscode/
 *.swp
 *.swo
+
+# Local SQLite databases
+data/*.db
+data/*.db-wal
+data/*.db-shm
+

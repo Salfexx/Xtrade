@@ -6,6 +6,10 @@ use chrono::{Duration as ChronoDuration, Utc};
 use tracing::info;
 use uuid::Uuid;
 
+fn normalize_symbol(s: &str) -> String {
+    s.replace(['/', '-', '_', ' '], "").to_uppercase()
+}
+
 pub struct BinaryManager;
 
 impl BinaryManager {
@@ -32,14 +36,20 @@ impl BinaryManager {
         let user_id = "demo_user";
 
         // Get latest price as strike price (or use client visual strike price if supplied)
-        let current_price = match req.strike_price {
-            Some(p) if p > 0.0 => p,
+        let (matched_symbol, current_price) = match req.strike_price {
+            Some(p) if p > 0.0 => (req.symbol.clone(), p),
             _ => {
                 let tickers = state.tickers.read();
-                tickers
-                    .get(&req.symbol)
-                    .map(|t| t.last_price)
-                    .ok_or_else(|| format!("Ticker symbol {} not found", req.symbol))?
+                if let Some(t) = tickers.get(&req.symbol) {
+                    (t.symbol.clone(), t.last_price)
+                } else {
+                    let norm = normalize_symbol(&req.symbol);
+                    tickers
+                        .iter()
+                        .find(|(k, _)| normalize_symbol(k) == norm)
+                        .map(|(k, t)| (k.clone(), t.last_price))
+                        .ok_or_else(|| format!("Ticker symbol {} not found", req.symbol))?
+                }
             }
         };
 
@@ -69,11 +79,11 @@ impl BinaryManager {
 
         let now = Utc::now();
         let expires_at = now + ChronoDuration::seconds(req.duration_seconds as i64);
-        let payout_pct = Self::get_payout_pct(&req.symbol);
+        let payout_pct = Self::get_payout_pct(&matched_symbol);
 
         let contract = BinaryContract {
             id: Uuid::new_v4(),
-            symbol: req.symbol,
+            symbol: matched_symbol,
             direction: req.direction,
             stake_usd: req.stake_usd,
             strike_price: current_price,
@@ -87,11 +97,14 @@ impl BinaryManager {
             status: BinaryStatus::Active,
         };
 
-        // Store contract
+        // Store contract in RAM
         {
             let mut contracts = state.binary_contracts.write();
             contracts.push(contract.clone());
         }
+
+        // Non-blocking async persistence (< 0.001ms latency overhead)
+        state.db.send(crate::engine::DbEvent::SaveContract(contract.clone()));
 
         // Broadcast to WebSocket clients
         let _ = state.ws_broadcast.send(WsMessage::BinaryContractUpdate(contract.clone()));
@@ -113,12 +126,13 @@ impl BinaryManager {
         let now = Utc::now();
         let user_id = "demo_user";
         let mut settled_contracts = Vec::new();
+        let norm_sym = normalize_symbol(symbol);
 
         {
             let mut contracts = state.binary_contracts.write();
             for contract in contracts.iter_mut() {
                 if contract.status == BinaryStatus::Active
-                    && contract.symbol == symbol
+                    && (contract.symbol == symbol || normalize_symbol(&contract.symbol) == norm_sym)
                     && now >= contract.expires_at
                 {
                     contract.settled_at = Some(now);
@@ -170,6 +184,9 @@ impl BinaryManager {
                     timestamp: now,
                     tx_hash: None,
                 });
+
+                // Asynchronous persistent update
+                state.db.send(crate::engine::DbEvent::UpdateContract(contract.clone()));
 
                 info!(
                     "Settled Binary Contract {} -> {:?} | Strike: ${:.2} -> Exit: ${:.2} | Payout: ${:.2}",

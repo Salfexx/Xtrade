@@ -3,7 +3,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tokio::sync::broadcast;
 use uuid::Uuid;
-use crate::engine::{Ledger, OrderBook, RiskConfig, RiskEngine};
+use crate::engine::{DbManager, Ledger, OrderBook, RiskConfig, RiskEngine};
 use crate::market_feed::{generate_initial_klines, initialize_tickers, seed_orderbook};
 use crate::models::{BinaryContract, Kline, Order, OtcQuoteResponse, PortfolioSummary, Ticker, Trade, WsMessage};
 
@@ -20,11 +20,13 @@ pub struct AppState {
     pub otc_quotes: RwLock<HashMap<Uuid, OtcQuoteResponse>>,
     pub binary_contracts: RwLock<Vec<BinaryContract>>,
     pub binance_config: RwLock<crate::engine::BinanceTestnetConfig>,
+    pub db: Arc<DbManager>,
 }
 
 impl AppState {
     pub fn new() -> Arc<Self> {
         let (ws_tx, _) = broadcast::channel(1024);
+        let (db, hydrated_contracts) = DbManager::init("data/xtrade.db");
         let raw_tickers = initialize_tickers();
         let mut tickers_map = HashMap::new();
         let mut orderbooks = HashMap::new();
@@ -57,8 +59,9 @@ impl AppState {
             ws_broadcast: ws_tx.clone(),
             ws_tx,
             otc_quotes: RwLock::new(HashMap::new()),
-            binary_contracts: RwLock::new(Vec::new()),
+            binary_contracts: RwLock::new(hydrated_contracts),
             binance_config: RwLock::new(binance_config),
+            db,
         })
     }
 
